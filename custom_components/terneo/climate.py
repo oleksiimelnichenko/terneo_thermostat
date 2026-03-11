@@ -1,7 +1,7 @@
 """Terneo Thermostat Support."""
 import logging
 
-from .thermostat import Thermostat
+from .thermostat import Thermostat, PARAMETERS
 import requests
 import voluptuous as vol
 from typing import Optional
@@ -17,6 +17,7 @@ from homeassistant.components.climate.const import (
     SUPPORT_TARGET_TEMPERATURE,
 )
 from homeassistant.const import (
+    ATTR_ENTITY_ID,
     ATTR_TEMPERATURE,
     CONF_HOST,
     CONF_NAME,
@@ -29,7 +30,49 @@ import homeassistant.helpers.config_validation as cv
 
 _LOGGER = logging.getLogger(__name__)
 
+DOMAIN = "terneo"
 CONF_SERIAL = "serial"
+
+DAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+SERVICE_SET_SCHEDULE = "set_schedule"
+SERVICE_SET_PARAMETER = "set_parameter"
+ATTR_DAY = "day"
+ATTR_PERIODS = "periods"
+ATTR_TIME = "time"
+ATTR_PARAMETER = "parameter"
+ATTR_VALUE = "value"
+
+WRITABLE_PARAMS = [name for _, (_, name, ro) in PARAMETERS.items() if not ro]
+
+SERVICE_SET_SCHEDULE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_ENTITY_ID): cv.entity_id,
+        vol.Required(ATTR_DAY): vol.All(vol.Coerce(int), vol.Range(min=0, max=6)),
+        vol.Required(ATTR_PERIODS): vol.All(
+            cv.ensure_list,
+            vol.Length(max=16),
+            [
+                vol.Schema(
+                    {
+                        vol.Required(ATTR_TIME): cv.string,
+                        vol.Required(ATTR_TEMPERATURE): vol.All(
+                            vol.Coerce(float), vol.Range(min=5, max=45)
+                        ),
+                    }
+                )
+            ],
+        ),
+    }
+)
+
+SERVICE_SET_PARAMETER_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_ENTITY_ID): cv.entity_id,
+        vol.Required(ATTR_PARAMETER): vol.In(WRITABLE_PARAMS),
+        vol.Required(ATTR_VALUE): vol.Any(bool, int, float),
+    }
+)
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
@@ -60,7 +103,75 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
     except (ValueError, AssertionError, requests.RequestException):
         return False
 
-    add_entities((ThermostatDevice(therm, name),), True)
+    device = ThermostatDevice(therm, name)
+    hass.data.setdefault(DOMAIN, {})[serialnumber] = device
+    add_entities((device,), True)
+
+    if not hass.services.has_service(DOMAIN, SERVICE_SET_SCHEDULE):
+        def handle_set_schedule(call):
+            """Handle the set_schedule service call."""
+            entity_id = call.data[ATTR_ENTITY_ID]
+            day = call.data[ATTR_DAY]
+            periods_raw = call.data[ATTR_PERIODS]
+
+            target = None
+            for dev in hass.data[DOMAIN].values():
+                if dev.entity_id == entity_id:
+                    target = dev
+                    break
+
+            if target is None:
+                _LOGGER.error("Entity %s not found", entity_id)
+                return
+
+            periods = []
+            for p in periods_raw:
+                parts = p[ATTR_TIME].split(":")
+                minutes = int(parts[0]) * 60 + int(parts[1])
+                temp_tenths = int(p[ATTR_TEMPERATURE] * 10)
+                periods.append([minutes, temp_tenths])
+
+            result = target.thermostat.set_schedule_day(day, periods)
+            if result:
+                target.schedule_update_ha_state(True)
+            else:
+                _LOGGER.error("Failed to set schedule for day %d on %s", day, entity_id)
+
+        hass.services.register(
+            DOMAIN, SERVICE_SET_SCHEDULE, handle_set_schedule,
+            schema=SERVICE_SET_SCHEDULE_SCHEMA,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_SET_PARAMETER):
+        def handle_set_parameter(call):
+            """Handle the set_parameter service call."""
+            entity_id = call.data[ATTR_ENTITY_ID]
+            param_name = call.data[ATTR_PARAMETER]
+            value = call.data[ATTR_VALUE]
+
+            target = None
+            for dev in hass.data[DOMAIN].values():
+                if dev.entity_id == entity_id:
+                    target = dev
+                    break
+
+            if target is None:
+                _LOGGER.error("Entity %s not found", entity_id)
+                return
+
+            result = target.thermostat.set_parameter(param_name, value)
+            if result:
+                target.schedule_update_ha_state(True)
+            else:
+                _LOGGER.error(
+                    "Failed to set parameter '%s' to '%s' on %s",
+                    param_name, value, entity_id,
+                )
+
+        hass.services.register(
+            DOMAIN, SERVICE_SET_PARAMETER, handle_set_parameter,
+            schema=SERVICE_SET_PARAMETER_SCHEMA,
+        )
 
 
 class ThermostatDevice(ClimateEntity):
@@ -71,11 +182,13 @@ class ThermostatDevice(ClimateEntity):
         self._name = name
         self.thermostat = thermostat
 
-        # set up internal state varS
+        # set up internal state vars
         self._state = None
         self._temperature = None
         self._setpoint = None
         self._mode = None
+        self._schedule = None
+        self._parameters = {}
 
     @property
     def supported_features(self):
@@ -140,6 +253,34 @@ class ThermostatDevice(ClimateEntity):
         """Return unique ID based on Terneo serial number."""
         return self.thermostat.sn
 
+    @property
+    def extra_state_attributes(self):
+        """Return device state attributes including schedule and settings."""
+        attrs = {}
+        if self._schedule is not None:
+            attrs["schedule"] = self._format_schedule(self._schedule)
+        if self._parameters:
+            attrs.update(self._parameters)
+        return attrs if attrs else None
+
+    @staticmethod
+    def _format_schedule(raw_schedule):
+        """Convert raw schedule to human-readable format."""
+        formatted = {}
+        for day_num, day_name in enumerate(DAY_NAMES):
+            key = str(day_num)
+            if key in raw_schedule:
+                periods = []
+                for minutes, temp_tenths in raw_schedule[key]:
+                    hours = minutes // 60
+                    mins = minutes % 60
+                    periods.append({
+                        "time": f"{hours:02d}:{mins:02d}",
+                        "temperature": temp_tenths / 10,
+                    })
+                formatted[day_name] = periods
+        return formatted
+
     def set_hvac_mode(self, hvac_mode):
         """Set new target hvac mode."""
         if hvac_mode == HVAC_MODE_AUTO:
@@ -161,3 +302,7 @@ class ThermostatDevice(ClimateEntity):
         self._temperature = self.thermostat.temperature
         self._state = self.thermostat.state
         self._mode = self.thermostat.mode
+        if self.thermostat._parameters:
+            self._parameters = self.thermostat._parameters
+        if self.thermostat._schedule is not None:
+            self._schedule = self.thermostat._schedule
