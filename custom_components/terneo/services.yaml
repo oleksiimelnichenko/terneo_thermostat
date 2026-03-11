@@ -1,0 +1,94 @@
+set_schedule:
+  name: Set schedule
+  description: Set the weekly schedule for a specific day on a Terneo thermostat.
+  fields:
+    entity_id:
+      name: Entity
+      description: The Terneo thermostat entity to update.
+      required: true
+      selector:
+        entity:
+          integration: terneo
+          domain: climate
+    day:
+      name: Day
+      description: "Day of week: 0=Monday, 1=Tuesday, 2=Wednesday, 3=Thursday, 4=Friday, 5=Saturday, 6=Sunday."
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 6
+          mode: slider
+    periods:
+      name: Periods
+      description: "List of time/temperature pairs. Max 16 per day. Example: [{time: '06:00', temperature: 28}, {time: '22:00', temperature: 18}]"
+      required: true
+      selector:
+        object:
+
+set_parameter:
+  name: Set parameter
+  description: Set a device parameter on a Terneo thermostat.
+  fields:
+    entity_id:
+      name: Entity
+      description: The Terneo thermostat entity to update.
+      required: true
+      selector:
+        entity:
+          integration: terneo
+          domain: climate
+    parameter:
+      name: Parameter
+      description: >
+        Parameter name. Available: mode, control_type, manual_air_temp, manual_floor_temp,
+        away_air_temp, away_floor_temp, brightness, hysteresis, air_correction,
+        floor_correction, upper_limit, lower_limit, upper_air_limit, lower_air_limit,
+        sensor_type, prop_koef, max_schedule_period, temp_temperature,
+        min_temp_advanced_mode, max_temp_advanced_mode, night_bright_start, night_bright_end,
+        start_away_time, end_away_time, child_lock, preheat, open_window_control,
+        use_night_bright, cooling_control, nc_contact_control, local_network_block,
+        cloud_block, power_off.
+      required: true
+      selector:
+        select:
+          options:
+            - mode
+            - control_type
+            - manual_air_temp
+            - manual_floor_temp
+            - away_air_temp
+            - away_floor_temp
+            - brightness
+            - hysteresis
+            - air_correction
+            - floor_correction
+            - upper_limit
+            - lower_limit
+            - upper_air_limit
+            - lower_air_limit
+            - sensor_type
+            - prop_koef
+            - max_schedule_period
+            - temp_temperature
+            - min_temp_advanced_mode
+            - max_temp_advanced_mode
+            - night_bright_start
+            - night_bright_end
+            - start_away_time
+            - end_away_time
+            - child_lock
+            - preheat
+            - open_window_control
+            - use_night_bright
+            - cooling_control
+            - nc_contact_control
+            - local_network_block
+            - cloud_block
+            - power_off
+    value:
+      name: Value
+      description: "Value to set. For boolean parameters use true/false. For numeric parameters use the appropriate integer value."
+      required: true
+      selector:
+        text:
