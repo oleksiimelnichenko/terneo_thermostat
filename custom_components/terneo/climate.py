@@ -71,6 +71,8 @@ SERVICE_SET_PARAMETER_SCHEMA = vol.Schema(
     }
 )
 
+CONF_TOTP_KEY = "totp_key"
+
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
         vol.Required(CONF_SERIAL): cv.string,
@@ -79,6 +81,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         vol.Optional(CONF_PORT, default=80): cv.port,
         vol.Inclusive(CONF_USERNAME, "authentication"): cv.string,
         vol.Inclusive(CONF_PASSWORD, "authentication"): cv.string,
+        vol.Optional(CONF_TOTP_KEY): cv.string,
     }
 )
 
@@ -94,9 +97,10 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
     port = config.get(CONF_PORT)
     username = config.get(CONF_USERNAME)
     password = config.get(CONF_PASSWORD)
+    totp_key = config.get(CONF_TOTP_KEY)
 
     try:
-        therm = Thermostat(serialnumber, host, port=port, username=username, password=password)
+        therm = Thermostat(serialnumber, host, port=port, username=username, password=password, totp_key=totp_key)
     except (ValueError, AssertionError, requests.RequestException):
         return False
 
