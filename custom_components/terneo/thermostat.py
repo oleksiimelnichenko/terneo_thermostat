@@ -243,7 +243,10 @@ class Thermostat:
         if val not in [0, 1]:
             raise ValueError("mode must be either 0,1")
 
-        self.post(json=dict(sn=self.sn, par=[[125, 7, "0"], [2, 2, str(val)]]))
+        pars = [[125, 7, "0"], [2, 2, str(val)]]
+        if val == 1 and self._setpoint is not None:
+            pars.append([5, 1, str(int(self._setpoint))])
+        self.post(json=dict(sn=self.sn, par=pars))
 
     @property
     def state(self):

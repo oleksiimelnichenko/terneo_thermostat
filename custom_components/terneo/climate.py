@@ -282,15 +282,20 @@ class ThermostatDevice(ClimateEntity):
         """Set new target hvac mode."""
         if hvac_mode == HVACMode.AUTO:
             self.thermostat.mode = 0
+            self._mode = 0
         elif hvac_mode == HVACMode.HEAT:
             self.thermostat.mode = 1
+            self._mode = 3
         elif hvac_mode == HVACMode.OFF:
             self.thermostat.turn_off()
+            self._mode = -1
 
     def set_temperature(self, **kwargs):
         """Set the temperature."""
         temp = kwargs.get(ATTR_TEMPERATURE)
-        self.thermostat.setpoint = temp
+        if temp is not None:
+            self.thermostat.setpoint = temp
+            self._setpoint = temp
 
     def update(self):
         """Update local state."""
