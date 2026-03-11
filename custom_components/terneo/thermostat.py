@@ -1,7 +1,11 @@
 import sys
+import hmac
+import hashlib
+import struct
 import requests
 import logging
 import time
+import base64
 
 from requests.auth import HTTPBasicAuth
 
@@ -66,7 +70,10 @@ class Thermostat:
         The password for the HTTP auth.
     """
 
-    def __init__(self, serialnumber, host, port=80, username=None, password=None):
+    # Seconds between 1970-01-01 and 2000-01-01
+    EPOCH_2000 = 946684800
+
+    def __init__(self, serialnumber, host, port=80, username=None, password=None, totp_key=None):
         if username or password and not username and password:
             raise ValueError(
                 "Username and Password must both be specified, if either are specified."
@@ -77,6 +84,7 @@ class Thermostat:
             self.auth = None
 
         self.sn = serialnumber
+        self._totp_key = totp_key
 
         self._base_url = "http://{}:{}/{{endpoint}}.cgi".format(host, port)
         self._setpoint = None
@@ -96,6 +104,30 @@ class Thermostat:
 
     def _get_url(self, endpoint):
         return self._base_url.format(endpoint=endpoint)
+
+    def _generate_totp(self):
+        """Generate a 9-digit TOTP token (RFC 6238, 30s interval)."""
+        if not self._totp_key:
+            return None, None
+        key = base64.b32decode(self._totp_key, casefold=True)
+        # Seconds since 2000-01-01
+        now = int(time.time()) - self.EPOCH_2000
+        counter = now // 30
+        msg = struct.pack(">Q", counter)
+        h = hmac.new(key, msg, hashlib.sha1).digest()
+        offset = h[-1] & 0x0F
+        code = struct.unpack(">I", h[offset:offset + 4])[0] & 0x7FFFFFFF
+        token = code % 1000000000  # 9 digits
+        return str(now), str(token).zfill(9)
+
+    def _auth_payload(self, payload):
+        """Inject TOTP auth fields into a write command payload."""
+        if self._totp_key and "sn" in payload:
+            t, auth = self._generate_totp()
+            if t and auth:
+                payload["time"] = t
+                payload["auth"] = auth
+        return payload
 
     def get(self, endpoint, **kwargs):
         """
@@ -135,11 +167,14 @@ class Thermostat:
 
         kwergs.update(kwargs)
 
+        # Inject TOTP auth for write commands
+        if 'json' in kwergs:
+            kwergs['json'] = self._auth_payload(kwergs['json'])
+
         start_time = time.time()
         if start_time - self._last_request < 1:
             time.sleep(1)
 
-        # _LOGGER.error(f"terneo request start time: {start_time}. cmd - {kwargs['json'].get('cmd')}; pars - {kwargs['json'].get('par')}")
         try:
             r = requests.post(self._get_url(endpoint), timeout=5, **kwergs)
         except Exception as e:
@@ -147,12 +182,15 @@ class Thermostat:
             _LOGGER.error(e)
             return False
         end_time = time.time()
-        # _LOGGER.error(f'terneo request end time: {end_time}. diff: {end_time - start_time}')
         self._last_request = end_time
         content = r.json()
 
         if content.get('status', '') == 'timeout':
-            _LOGGER.error(f'terneo timout: {kwargs}')
+            _LOGGER.error(f'terneo timeout: {kwargs}')
+            return False
+
+        if content.get('success') == 'block':
+            _LOGGER.error('terneo: command blocked by device. Configure totp_key or disable local network block.')
             return False
 
         return content
@@ -271,7 +309,9 @@ class Thermostat:
         return self.post(json=dict(sn=self.sn, par=[[125, 7, "0"]]))
 
     def turn_off(self):
-        return self.post(json=dict(sn=self.sn, par=[[125, 7, "1"]]))
+        # par 2: 0=schedule, 1=manual (telemetry m.1 uses 0/3)
+        par_mode = "1" if self._mode == 3 else "0"
+        return self.post(json=dict(sn=self.sn, par=[[2, 2, par_mode], [125, 7, "1"]]))
 
     def get_parameters(self):
         """
