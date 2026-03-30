@@ -7,7 +7,6 @@ import voluptuous as vol
 from typing import Optional
 
 from homeassistant.components.climate import (
-    PLATFORM_SCHEMA,
     ClimateEntity,
     ClimateEntityFeature,
     HVACAction,
@@ -73,7 +72,7 @@ SERVICE_SET_PARAMETER_SCHEMA = vol.Schema(
 
 CONF_TOTP_KEY = "totp_key"
 
-PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
+PLATFORM_SCHEMA = cv.PLATFORM_SCHEMA.extend(
     {
         vol.Required(CONF_SERIAL): cv.string,
         vol.Required(CONF_HOST): cv.string,
